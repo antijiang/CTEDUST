@@ -10,6 +10,12 @@
 #ifndef BOARDTYPE_MINI
 #include "LCD_Driver.h"
 #endif
+//#define	DEBUG_DUST
+#ifdef	DEBUG_DUST
+#define	DPRINTF(a) printf a
+#else
+#define	DPRINTF(a)
+#endif
 #define	MIN_UPDATE_VDD 4700
 #define	MAX_UPDATE_VDD 5300
 volatile uint8_t Sec_ReadCount = 0, Min_ReadCount = 0, Update_ReadCount = 0, Dust_N_ReadCount = 0, Total_ReadCount = 0;
@@ -22,7 +28,7 @@ uint16_t  VddRel_MV=0;  //转换为真实电压值，单位mv
 #endif
 // 用于更新无尘电压
 volatile uint16_t WorkingTime = 0;
-volatile uint8_t TurnUpCleanVolConfirmTimes = 0;
+volatile uint16_t TurnUpCleanVolConfirmTimes = 0;
 volatile uint16_t First_Value = 0;
 volatile uint16_t Last_Value = 0;  // 最后的值
 volatile uint8_t Readed_Machine_State = 0x05;// 5: 连接错误 0：关闭 1：打开
@@ -70,7 +76,13 @@ uint32_t Calc_Dust_Aver(uint16_t* dustData, uint8_t length, uint16_t secAver);
 void Calc_Virtual_KandB(void);
 
 //===============================================================================
+void   calTemp(void )
+{
+  float_t k,deltVcal;
+//  uint16_t calaft;
 
+  CyclicAveraftercalibrate= CyclicAver;
+}
 void StoreCleanVoltage(void)
 {
   Flash_Write(STORE_OFFSET_CLEANVOLTAGE, CleanVoltage);
@@ -335,6 +347,8 @@ void UART0_IRQHandler(void)
             }
         }
     }
+
+  //{STX】【S】【N】【N】【N】【X】【X】【ETX】
   else if (CurrentUARTMod == UARTMOD_DATA_LINK)
     {
       /* 已经接收到起始字节 */
@@ -363,7 +377,7 @@ void UART0_IRQHandler(void)
       else // 还未接收到起始字节
         {
           /* 接收到起始字节 */
-          if (rcvByte == 0x05 || rcvByte == 0x06)
+          if (rcvByte == 0x05 )
             {
               Receive_Seek=0;
               /* 开始接收 */
@@ -604,6 +618,8 @@ void SendCalInfo(void)
   uint32_t* d_kn1 = (uint32_t*)&Kn1;
   uint32_t* d_kn2 = (uint32_t*)&Kn2;
 
+
+
   _UART_SENDBYTE(UART0, *sens >> 24);
   _UART_SENDBYTE(UART0, *sens >> 16);
   _UART_SENDBYTE(UART0, *sens >> 8);
@@ -638,7 +654,10 @@ void SendCalInfo(void)
   _UART_SENDBYTE(UART0, *d_kn2 >> 16);
   _UART_SENDBYTE(UART0, *d_kn2 >> 8);
   _UART_SENDBYTE(UART0, *d_kn2);
+
+
 }
+
 
 void SendSensorValues(void)
 {
@@ -721,7 +740,13 @@ uint32_t Calc_Dust_Aver(uint16_t* dustData, uint8_t length, uint16_t secAver)
   return dust_Count / Sensitivity;
 }
 
+#if 0
 // 注意: 每个使用的地方应该有一个单独的p_totalCnt!!!
+
+//*p_totalcnt 循环区有效的准备好的参与平均值的数据的总数
+//循环缓冲区cyclic_length: 样板个数 来求平均值
+//data 缓冲区指针
+//data_length ：缓冲区的长度
 uint16_t Cyclic_Aver(uint16_t* data, uint8_t data_length, uint8_t startpos, uint8_t cyclic_length, volatile uint8_t* p_totalCnt)
 {
   // 计算最近cyclic_length秒的均值
@@ -731,6 +756,7 @@ uint16_t Cyclic_Aver(uint16_t* data, uint8_t data_length, uint8_t startpos, uint
     {
       (*p_totalCnt)++;
     }
+  else
   for (i = 0; i < *p_totalCnt; i++)
     {
       if (startpos > 0)
@@ -739,6 +765,7 @@ uint16_t Cyclic_Aver(uint16_t* data, uint8_t data_length, uint8_t startpos, uint
         }
       else
         {
+            //case startpos=0
           startpos = data_length - 1;
         }
       result += Min_Data[startpos];
@@ -747,6 +774,42 @@ uint16_t Cyclic_Aver(uint16_t* data, uint8_t data_length, uint8_t startpos, uint
   return result;
 }
 
+#else
+// 注意: 每个使用的地方应该有一个单独的p_totalCnt!!!
+
+//*p_totalcnt 循环区有效的准备好的参与平均值的数据的总数
+//循环缓冲区cyclic_length: 样板个数 来求平均值
+//data 缓冲区指针
+//data_length ：整个缓冲区的长度
+uint16_t Cyclic_Aver(uint16_t* data, uint8_t data_length, uint8_t startpos, uint8_t cyclic_length, volatile uint8_t* p_totalCnt)
+{
+  // 计算最近cyclic_length秒的均值
+  uint32_t result = 0;
+  uint8_t i;
+  uint8_t t=*p_totalCnt;
+  if (t < cyclic_length)
+    {
+      //do nothing
+    }
+  else 		t=cyclic_length;
+  //t取了用作平均数的 总个数，数据采用未满时取* p_totalCnt，取满采用
+  for (i = 0; i < t; i++)
+    {
+      if (startpos > 0)
+        {
+          startpos--;
+        }
+      else
+        {
+          //case startpos=0
+          startpos = data_length - 1;
+        }
+      result += Min_Data[startpos];
+    }
+  result /= t;
+  return result;
+}
+#endif
 void LoadDatas(void)
 {
   ReadCleanVoltage();
@@ -863,7 +926,9 @@ void DustSensor_Init(void)
   Calc_Virtual_KandB();
 
     printf(" SHARP  COMTECH\r\n");
-//    printf("CPU @ %dHz\r\n", SystemCoreClock);
+#ifdef	TEMP_DETECT
+  SYS->TEMPCR=1;
+#endif
 
 #ifndef BOARDTYPE_MINI
   /* Init SPI0 and LCD */
@@ -925,8 +990,11 @@ void ProcessSerialCommand(void)
   if (CommandReceived)
     {
       uint8_t *commandBytes = NULL;
-      uint8_t readPos;
+
       CommandReceived = FALSE;
+#ifdef	EXT_CMD
+      uint8_t readPos;
+#endif
 
       /*动态创建一个有数据长度+3(类型,长度,校验码)个uint8_t元素的数组*/
       commandBytes = (uint8_t*)malloc(sizeof(uint8_t)*(GetDataLength((uint8_t*)SerialBuffer) + 3));
@@ -935,13 +1003,18 @@ void ProcessSerialCommand(void)
         {
           if (CheckDATA(commandBytes))
             {
-              uint32_t fTemp;
+//              uint32_t fTemp;
               /* 保存当前的模式, 切换到关闭自动输出的模式处理完命令后切换回原来的模式 */
               enum UART_OUTPUT_MOD temp_mod = CurrentUARTMod;
               CurrentUARTMod = UARTMOD_NO_AUTO_OUTPUT;
+#ifdef		EXT_CMD
               readPos = (Min_ReadCount ? Min_ReadCount : 60) - 1;
+#endif
               switch (commandBytes[0]) // 类型
                 {
+default:
+                  break;
+#ifdef EXT_CMD
                 case CMD_GET_SEC_VALUE:
                   if (commandBytes[3] == Address)
                     {
@@ -957,12 +1030,14 @@ void ProcessSerialCommand(void)
                       _UART_SENDBYTE(UART0, Min_Data[readPos]);
                     }
                   break;
+#endif
                 case CMD_SET_UART_OUTPUT_MOD: //
                   if (commandBytes[3] == Address || commandBytes[3] == 0)
                     {
                       temp_mod = (enum UART_OUTPUT_MOD)commandBytes[4];
                     }
                   break;
+
                 case CMD_GET_CALIBRATE_VOL:
                   if (commandBytes[3] == Address)
                     {
@@ -977,6 +1052,7 @@ void ProcessSerialCommand(void)
                       _UART_SENDBYTE(UART0, CurrentConcentration_Smoke);
                     }
                   break;
+#ifdef EXT_CMD
                 case CMD_GET_CURRENT_DUST:
                   if (commandBytes[3] == Address)
                     {
@@ -984,15 +1060,20 @@ void ProcessSerialCommand(void)
                       _UART_SENDBYTE(UART0, CurrentConcentration_Dust);
                     }
                   break;
+
+
+                case CMD_GET_SENSOR_VALUES:
+                  SendSensorValues();
+                  break;
+#endif
+
                 case CMD_GET_CALIBRATE_INFO:
                   if (commandBytes[3] == Address)
                     {
                       SendCalInfo();
                     }
                   break;
-                case CMD_GET_SENSOR_VALUES:
-                  SendSensorValues();
-                  break;
+
                 case CMD_CALIBRATE_A:
                   //todo
                   if (commandBytes[3] == Address || (Address != 1 && commandBytes[3] == 0))
@@ -1065,6 +1146,7 @@ void ProcessSerialCommand(void)
                         SendCalInfo();
                     }
                   break;
+#ifdef EXT_CMD
                 case CMD_CAL_N:
                   if (commandBytes[3] == Address || (Address != 1 && commandBytes[3] == 0))
                     {
@@ -1184,6 +1266,8 @@ void ProcessSerialCommand(void)
                         SendCalInfo();
                     }
                   break;
+
+#endif
                 }
               CurrentUARTMod = temp_mod;
             }
@@ -1196,7 +1280,7 @@ void Display_Min_Aver(uint16_t Min_Aver)
 {
   char strVal[LCD_WIDTH] = "Min_Value:      ";
   PrintToLCD(1, strVal, Min_Aver, 10);
-  // if(CurrentUARTMod != UARTMOD_CAL)        printf("Min_Value: %d, Total: %d\r\n", Min_Aver, Total_ReadCount);
+  //if (CurrentUARTMod != UARTMOD_CAL) DPRINTF(("Min_Value: %d, Total: %d\r\n", Min_Aver, Total_ReadCount));
 }
 
 void TryUpdateClean(uint16_t value)
@@ -1216,7 +1300,7 @@ void TryUpdateClean(uint16_t value)
             {
               /**/
               CurrentUARTMod = UARTMOD_DEBUG;
-//               printf("CLEAN_VOLTAGE Updated to: %d\r\n", CleanVoltage);
+              DPRINTF(("CLEAN_VOLTAGE Updated to: %d\r\n", CleanVoltage));
               CurrentUARTMod = UARTMOD_DATA_LINK;
               /**/
             }
@@ -1228,13 +1312,10 @@ void TryUpdateClean(uint16_t value)
 _Bool GetMachineWorking(void)
 {
   _Bool up = FALSE;
-
   if (Readed_Machine_State == 0x01)
     {
       up = TRUE;
       //Readed_Machine_State = 0x05;
-
-
     }
   if (workingTm==0)up=0;//很久没有收到更改 其他机器发来的指令
   return up;
@@ -1247,10 +1328,10 @@ void DustSensor_Process(void)
       uint16_t sec_Aver;
 
       // 比平均值大的数据个数
-      uint8_t greaterCount = 0;
+      //uint8_t greaterCount = 0;
       uint8_t i;
       uint32_t sec_Count = 0;
-      uint16_t dust_Data[100];
+     // uint16_t dust_Data[100];
 
 
 #ifdef REF25_VDD
@@ -1275,47 +1356,79 @@ void DustSensor_Process(void)
       sec_Aver = sec_Count / DATA_SIZE;
       Min_Data[Min_ReadCount++] = sec_Aver;
       Update_Data[Update_ReadCount++] = sec_Aver;
-      Sec_ReadCount = 0;
+      Sec_ReadCount = 0;//重新开始新一轮测量，10ms，  一个，将缓冲区指针置0
+
+      if (Total_ReadCount<250)Total_ReadCount++;//实际已经采样的数据个数，250随便取的，采样未满60，取只取Total_ReadCount个数计算平均数，满60 择取60个或CYCLIC_COUNT（较小）的平均数
+
+      //	Total_ReadCount=Min_ReadCount;
+
 
       // Todo: 对秒值进行处理
       {
         char strVal[LCD_WIDTH] = "Sec_Value:      ";
-
-        int8_t conCount = Min_ReadCount, i;
+        uint16_t  	CyclicAver1;//两秒平均值 突变
+        int8_t currentpos = Min_ReadCount, i;
 
         // 输出电压值到LCD
         if (CurrentUARTMod == UARTMOD_DEBUG && Total_ReadCount > 3)
           {
             PrintToLCD(0, strVal, (int)(sec_Aver * REFVOL / ADC_MAX_VALUE), 10);
           }
-//            printf("Sec_Value: %dmV\r\n", (int)(sec_Aver * REFVOL / ADC_MAX_VALUE));
+
+       // DPRINTF(("Sec_Value: %dmV\r\n", (int)(sec_Aver * REFVOL / ADC_MAX_VALUE)));
 
         // 更新PWM输出
         Set_PWMB_Output(CurrentConcentration_Smoke);
 
-        // 计算最近5秒的均值
-        CyclicAver = Cyclic_Aver((uint16_t*)Min_Data, 60, conCount, CYCLIC_COUNT, &Total_ReadCount);
+        // 计算最近CYCLIC_COUNT=?秒的均值
+        CyclicAver = Cyclic_Aver((uint16_t*)Min_Data, 60, currentpos, CYCLIC_COUNT, &Total_ReadCount);
 
-        /* 当前值比Flash中存储的大 */
-        if (CyclicAver > CleanVoltage)
+#if 1
+
+        //最近3秒变化量大，则数据重新采样，以利于显示的快速更新
+        CyclicAver1 = Cyclic_Aver((uint16_t*)Min_Data, 60, currentpos, 3, &Total_ReadCount);
+        //	if(abs(CyclicAver1-CyclicAver)*10/CyclicAver>2)
+        if (abs((int32_t)CyclicAver1-(int32_t)CyclicAver)>45)
           {
-            if (CyclicAver <= Calibrate_B_AD)
+            Min_ReadCount=0;
+            Update_ReadCount=0;
+            Total_ReadCount=0;
+            TurnDownCleanVolConfirmTimes=0;
+            for (i=0;i<UPDATE_CYCLIC_COUNT;i++)
               {
-                if (CyclicAver > VB1)
-                  CurrentConcentration_Smoke = (CyclicAver - VB1) / (Sensitivity * Kn1);
+                Min_Data[i]=CyclicAver1;
+                Update_Data[i]=CyclicAver1;
+              }
+
+            ;
+          }
+#endif
+        calTemp();//其他温度下的测量电压映射到 25度的电压 ，在25度的曲线运算，所有存储的电压系数都是25度的
+        /* 当前值比Flash中存储的大 */
+
+
+
+{
+          uint16_t	CyclicAver25C=CyclicAveraftercalibrate;
+          if (CyclicAver25C > CleanVoltage)
+          {
+              if (CyclicAver25C <= Calibrate_B_AD)
+              {
+                  if (CyclicAver25C > VB1)
+                    CurrentConcentration_Smoke = (CyclicAver25C - VB1) / (Sensitivity * Kn1);
                 else
                   CurrentConcentration_Smoke = 0;
               }
             else
               {
-                if (CyclicAver > VB1)
-                  CurrentConcentration_Smoke = (CyclicAver - VB2) / (Sensitivity * Kn2);
+                  if (CyclicAver25C > VB1)
+                    CurrentConcentration_Smoke = (CyclicAver25C - VB2) / (Sensitivity * Kn2);
                 else
                   CurrentConcentration_Smoke = 0;
               }
             TurnDownCleanVolConfirmTimes = 0;
 
-
+#if 0
             /* 计算灰尘类型（烟/尘） */
             for (i = 0; i < 100; i++)
               {
@@ -1346,7 +1459,11 @@ void DustSensor_Process(void)
               DustFiveSecAver = dustValAver;
               CurrentConcentration_Dust = (int)(dustValAver / Dust_Calc_N + CurrentConcentration_Smoke);
             }
-//               printf("Value over 15%%: %d\r\n", greaterCount);
+
+#ifdef	DEBUG_DUST
+              DPRINTF(("Value over 15%%: %d\r\n", greaterCount));
+#endif
+#endif
           }
         else
           {
@@ -1375,7 +1492,7 @@ void DustSensor_Process(void)
                     {
                       /**/
                       CurrentUARTMod = UARTMOD_DEBUG;
-//                        printf("CLEAN_VOLTAGE Updated to: %d\r\n", CyclicAver);
+                     //   DPRINTF(("CLEAN_VOLTAGE Updated to: %d\r\n", CyclicAver25C));
                       CurrentUARTMod = UARTMOD_DATA_LINK;
                       /**/
                     }
@@ -1396,6 +1513,9 @@ void DustSensor_Process(void)
                 }
             }
           }
+
+        }
+
 
         // 输出模式为DATA_LINK 每秒输出一次数据
         {
@@ -1457,7 +1577,7 @@ void DustSensor_Process(void)
 
 
       if (workingTm!=0)workingTm--;
-      // 向上更新无尘电压
+    // 向上更新无尘电压 镜头有灰尘，散射严重,每分钟检查一次
       if (Update_ReadCount >= UPDATE_CYCLIC_COUNT)
         {
           //每分钟干活
@@ -1481,8 +1601,8 @@ void DustSensor_Process(void)
               if (Current_Machine_State && !Last_Machine_State)
                 First_Start = TRUE;
               Last_Machine_State = Current_Machine_State;
-              // 如果机器开启
-            }
+                         }
+ // 如果机器开启
           if (Current_Machine_State)
             {
               if (Last_Value == 0)
@@ -1520,11 +1640,14 @@ void DustSensor_Process(void)
                         {
                           TurnUpCleanVolConfirmTimes=0;
 
-                        }                      else
+                        }                      
+else
 #endif
                         TurnUpCleanVolConfirmTimes ++;
                     }
-                  //printf("Current Change: %f%%\r\n", percent * 100);
+
+                 // DPRINTF(("Current Change: %f%%\r\n", percent * 100));
+
                   TryUpdateClean(min_Aver);
                 }
               else // 不大于门限
