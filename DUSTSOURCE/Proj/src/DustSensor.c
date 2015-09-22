@@ -16,27 +16,27 @@
 #else
 #define	DPRINTF(a)
 #endif
-
+#define WDT_ENABLE
 #ifdef  ADDR_USE_SWITCH
 uint32_t PulseCNT = 0;
 #endif
 #define	MIN_UPDATE_VDD 4700
 #define	MAX_UPDATE_VDD 5300
 volatile uint8_t Sec_ReadCount = 0, Min_ReadCount = 0, Update_ReadCount = 0,
-    Dust_N_ReadCount = 0, Total_ReadCount = 0;
+                                 Dust_N_ReadCount = 0, Total_ReadCount = 0;
 volatile uint16_t Sec_Data[DATA_SIZE], Min_Data[60],
-    Update_Data[UPDATE_CYCLIC_COUNT], Dust_N_Data[CYCLIC_TIME];
+Update_Data[UPDATE_CYCLIC_COUNT], Dust_N_Data[CYCLIC_TIME];
 #ifdef	REF25_VDD
 uint16_t Vdd_Data[DATA_SIZE];
 uint8_t Vdd_ReadCount = 0;
-uint16_t Vdd_Aver1S;		//电源电压数字采样值
-uint16_t VddRel_MV = 0;  //转换为真实电压值，单位mv
+uint16_t Vdd_Aver1S; //电源电压数字采样值
+uint16_t VddRel_MV = 0; //转换为真实电压值，单位mv
 #endif
 
 #ifdef	TEMP_DETECT
 uint16_t Vtemp_Data[DATA_SIZE];
 uint8_t Vtemp_ReadCount = 0;
-uint16_t Vtemp_Aver1S;		//电源电压数字采样值
+uint16_t Vtemp_Aver1S; //电源电压数字采样值
 uint16_t gTemp0, gTempn;//温度AD采样
 uint16_t gTemp0V, gTempnV;//对应温度的灰尘电压
 
@@ -52,7 +52,7 @@ volatile uint16_t TurnUpCleanVolConfirmTimes = 0;
 //volatile _Bool Last_Machine_State = FALSE;
 //volatile _Bool First_Start = FALSE;
 
-volatile uint8_t Readed_Machine_State = 0x05;  // 5: 连接错误 0：关闭 1：打开
+volatile uint8_t Readed_Machine_State = 0x05; // 5: 连接错误 0：关闭 1：打开
 uint16_t workingTm = 0; //对最近发来指令的时间差，倒计时时到0后，机器为未工作状态
 
 volatile _Bool AutoOutPutCurrentSmoke = FALSE;
@@ -84,7 +84,7 @@ volatile uint16_t Calibrate_B_AD;
 volatile uint16_t Calibrate_B_Concentration;
 volatile float Kn1;
 volatile float Kn2;
-uint8_t DustPortOrUartMode = 0;  //工作在读取端口高低判定除尘器是否工作 0：读端口  1：读串口
+uint8_t DustPortOrUartMode = 0; //工作在读取端口高低判定除尘器是否工作 0：读端口  1：读串口
 volatile uint16_t Calibrate_N_Concentration;
 
 //功能：从当前位置startpos（数据采样当前位置，数据最新）往回计算最新的 AVGDataNum个数据的平均值
@@ -96,7 +96,7 @@ volatile uint16_t Calibrate_N_Concentration;
 //startpos : 数据开始点 （往回）
 uint16_t
 Cyclic_Aver(uint16_t* buf, uint8_t BUFSIZE, uint8_t startpos,
-    uint8_t AVGDataNum, volatile uint8_t* p_totalCnt);
+            uint8_t AVGDataNum, volatile uint8_t* p_totalCnt);
 /* 计算两条直线的K与b值 */
 void
 Calc_Virtual_KandB(void);
@@ -313,33 +313,84 @@ ReadKn2(void)
       Kn2 = KN2;
     }
 }
+#ifdef  WDT_ENABLE
+void
+WDT_Init()
+{
 
+  NVIC_DisableIRQ(WDT_IRQn); //Disable WDT interrupt
+  outpw(&WDT->WTCR ,0 ); //Disable WDT
+
+  SYS_UnlockReg();
+  ///* Step 1. Enable and Select WDT clock source */SYSCLK->CLKSEL1.WDG_S = 3; //Select 10Khz for WDT clock source
+  SYSCLK->CLKSEL1 |= (3 << SYSCLK_CLKSEL1_WDT_S_Pos);
+
+  // SYSCLK->APBCLK.WDG_EN = 1; //Enable WDT clock source
+  SYSCLK->APBCLK |= SYSCLK_APBCLK_WDT_EN_Msk;
+  /* Step 2. Select Timeout Interval */
+
+  //WDT->WTCR.WTIS =6; // 4  Select level 3 (11-bit mode)
+  WDT->WTCR &= ~(WDT_WTCR_WTIS_Msk);
+  WDT->WTCR |= (6 << WDT_WTCR_WTIS_Pos);
+
+  ///* Step 3. Enable Watchdog Timer Reset function */WDT->WTCR.WTRE = 1;
+  _WDT_CLEAR_RESET_FLAG();
+
+  ///* Step 4. Enable WDT interrupt */WDT->WTCR.WTIF = 1; //Write 1 to clear for safty
+
+  //WDT->WTCR.WTIE = 1;
+  //NVIC_EnableIRQ(WDT_IRQn); //Enable WDT Interrupt
+
+  ///* Step 5. Enable WDT module */WDT->WTCR.WTE = 1; //Enable WDT
+  _WDT_ENABLE_COUNTING();
+  SYS_LockReg();
+
+}
+void
+WDT_Fetch()
+{
+  SYS_UnlockReg();
+  //WDT->WTCR.WTIF = 1;
+  _WDT_CLEAR_TIMEOUT_INT_FLAG();
+  //  WDTCOUN++;
+  //if (WDTCOUN < 10)
+  //  WDT->WTCR.WTR = 1; //Wait 10 times
+  _WDT_RESET();
+  SYS_LockReg();
+
+}
+#endif
 void
 SYS_Init(void)
 {
   SYS_UnlockReg();
 
-  /* Enable Internal RC clock */SYSCLK ->PWRCON |= SYSCLK_PWRCON_IRC22M_EN_Msk;
+  /* Enable Internal RC clock */
+  SYSCLK ->PWRCON |= SYSCLK_PWRCON_IRC22M_EN_Msk;
   /* Waiting for IRC22M clock ready */
   SYS_WaitingForClockReady(SYSCLK_CLKSTATUS_IRC22M_STB_Msk);
-  /* Switch HCLK clock source to internal RC */SYSCLK ->CLKSEL0 =
-      SYSCLK_CLKSEL0_HCLK_IRC22M;
-  /* Enable PLL and Set PLL frequency */SYSCLK ->PLLCON =
-      SYSCLK_PLLCON_50MHz_IRC22M;
+  /* Switch HCLK clock source to internal RC */
+  SYSCLK ->CLKSEL0  = SYSCLK_CLKSEL0_HCLK_IRC22M;
+  /* Enable PLL and Set PLL frequency */
+  SYSCLK ->PLLCON  = SYSCLK_PLLCON_50MHz_IRC22M;
 
   /* Waiting for clock ready */
   SYS_WaitingForClockReady(SYSCLK_CLKSTATUS_PLL_STB_Msk);
 
-  /* Switch HCLK clock source to PLL, STCLK to HCLK/2 */SYSCLK ->CLKSEL0 =
-      SYSCLK_CLKSEL0_STCLK_HCLK_DIV2 | SYSCLK_CLKSEL0_HCLK_PLL;
+  /* Switch HCLK clock source to PLL, STCLK to HCLK/2 */
+  SYSCLK ->CLKSEL0  = SYSCLK_CLKSEL0_STCLK_HCLK_DIV2 | SYSCLK_CLKSEL0_HCLK_PLL;
 
-  /* Enable IP clock */SYSCLK ->APBCLK = SYSCLK_APBCLK_UART0_EN_Msk | /*SYSCLK_APBCLK_SPI0_EN_Msk |*/
-  SYSCLK_APBCLK_PWM23_EN_Msk | SYSCLK_APBCLK_PWM45_EN_Msk
-      | SYSCLK_APBCLK_ADC_EN_Msk | SYSCLK_APBCLK_TMR0_EN_Msk;
-  /* IP clock source */SYSCLK ->CLKSEL1 = SYSCLK_CLKSEL1_UART_IRC22M
-      | SYSCLK_CLKSEL1_PWM23_IRC22M | SYSCLK_CLKSEL1_ADC_IRC22M
-      | SYSCLK_CLKSEL1_TMR0_IRC22M;
-  /* IP clock2 source */SYSCLK ->CLKSEL2 = SYSCLK_CLKSEL2_PWM45_IRC22M;
+  /* Enable IP clock */
+  SYSCLK ->APBCLK = SYSCLK_APBCLK_UART0_EN_Msk| /*SYSCLK_APBCLK_SPI0_EN_Msk |*/
+		  SYSCLK_APBCLK_PWM23_EN_Msk
+                    | SYSCLK_APBCLK_PWM45_EN_Msk | SYSCLK_APBCLK_ADC_EN_Msk
+                    | SYSCLK_APBCLK_TMR0_EN_Msk;
+  /* IP clock source */
+  SYSCLK ->CLKSEL1 = SYSCLK_CLKSEL1_UART_IRC22M
+                     | SYSCLK_CLKSEL1_PWM23_IRC22M | SYSCLK_CLKSEL1_ADC_IRC22M
+                     | SYSCLK_CLKSEL1_TMR0_IRC22M;
+  /* IP clock2 source */
+  SYSCLK ->CLKSEL2 = SYSCLK_CLKSEL2_PWM45_IRC22M;
 
   /*---------------------------------------------------------------------------------------------------------*/
   /* Init I/O Multi-function                                                                                 */
@@ -354,6 +405,7 @@ SYS_Init(void)
   SYS ->P3_MFP |= SYS_MFP_P30_RXD0 | SYS_MFP_P31_TXD0 | SYS_MFP_P34_T0;
   /* Lock protected registers */
   SYS_LockReg();
+
 }
 
 void
@@ -363,7 +415,8 @@ UART0_IRQHandler(void)
   uint8_t rcvByte;
   rcvByte = UART0 ->DATA;
 
-  /* 清除中断标志 */UART0 ->ISR |= UART_ISR_RDA_INT_Msk;
+  /* 清除中断标志 */
+  UART0 ->ISR |= UART_ISR_RDA_INT_Msk;
   if (CurrentUARTMod == UARTMOD_DEBUG || CurrentUARTMod == UARTMOD_CAL)
     {
       /* 已经接收到起始字节 */
@@ -440,12 +493,12 @@ UART0_IRQHandler(void)
             }
         }
     }
-    {
+  {
 
-      if (CommandReceived)
-        memcpy((char *) &ReadBuffer, (char *) &SerialBuffer, SERIAL_BUFF_SIZE);
+    if (CommandReceived)
+      memcpy((char *) &ReadBuffer, (char *) &SerialBuffer, SERIAL_BUFF_SIZE);
 
-    }
+  }
 }
 
 void
@@ -454,7 +507,7 @@ UART0_Init(void)
   UART0 ->BAUD =
       UART_BAUD_MODE2 | UART_BAUD_DIV_MODE2(__IRC22M, UART_BAUD_RATE);
   _UART_SET_DATA_FORMAT(UART0,
-      UART_WORD_LEN_8 | UART_PARITY_NONE | UART_STOP_BIT_1);
+                        UART_WORD_LEN_8 | UART_PARITY_NONE | UART_STOP_BIT_1);
 
   /* 打开UART接收中断 */
   _UART_ENABLE_INT(UART0, UART_IER_RDA_IEN_Msk);
@@ -586,7 +639,7 @@ void
 ADC_Complete(void)
 {
   uint16_t value;
-  static int firstADPWM = 1;  //第一次有可能开中断的时间晚了，导致立马中断，采样位置错误
+  static int firstADPWM = 1; //第一次有可能开中断的时间晚了，导致立马中断，采样位置错误
   if (firstADPWM)
     {
       firstADPWM = 0;
@@ -624,7 +677,8 @@ void
 StartADC(uint8_t adc_channel, uint16_t hbit)
 {
   ADC ->ADCHER = (0x1 << adc_channel) | hbit; //jxd
-  /* 单次转换 */ADC ->ADCR = ADC_ADCR_ADEN_Msk | ADC_ADCR_ADST_Msk;
+  /* 单次转换 */
+  ADC ->ADCR = ADC_ADCR_ADEN_Msk | ADC_ADCR_ADST_Msk;
   /* 等待转换完成 */
   while (ADC ->ADCR & ADC_ADCR_ADST_Msk)
     ;
@@ -640,8 +694,8 @@ TMR0_IRQHandler(void)
   StartADC(SENSOR_ADC_CHANEL, 0);
   ADC_Complete();
 #ifdef	REF25_VDD
-  ADC ->ADCHER = 0x100 |  //选择间隙电压
-      (0x1 << REF25_ADC_CHANEL); //稳定 ，避免延时,提早切换,先切换到其他通道
+  ADC ->ADCHER = 0x100 | //选择间隙电压
+                 (0x1 << REF25_ADC_CHANEL); //稳定 ，避免延时,提早切换,先切换到其他通道
 
 #endif
 }
@@ -736,50 +790,50 @@ SendCalInfo(void)
 void
 SendSensorValues(void)
 {
-//    float temp;
-//    float humi;
-//    float ion;
-//    float radi;
-//    uint32_t* ptemp = (uint32_t*)(&temp);
-//    uint32_t* phumi = (uint32_t*)(&humi);
-//    uint32_t* pion = (uint32_t*)(&ion);
-//    uint32_t* pradi = (uint32_t*)(&radi);
-//
-//    GetTemperature(&temp);
-//    GetHum(&humi);
-//    GetIonCount(&ion);
-//    GetDoseRatio(&radi);
+  //    float temp;
+  //    float humi;
+  //    float ion;
+  //    float radi;
+  //    uint32_t* ptemp = (uint32_t*)(&temp);
+  //    uint32_t* phumi = (uint32_t*)(&humi);
+  //    uint32_t* pion = (uint32_t*)(&ion);
+  //    uint32_t* pradi = (uint32_t*)(&radi);
+  //
+  //    GetTemperature(&temp);
+  //    GetHum(&humi);
+  //    GetIonCount(&ion);
+  //    GetDoseRatio(&radi);
 
-//    //Smoke:
-//    _UART_SENDBYTE(UART0, 0);
-//    _UART_SENDBYTE(UART0, 0);
-//    _UART_SENDBYTE(UART0, CurrentConcentration_Smoke >> 8);
-//    _UART_SENDBYTE(UART0, CurrentConcentration_Smoke);
-//    //Dust:
-//    _UART_SENDBYTE(UART0, 0);
-//    _UART_SENDBYTE(UART0, 0);
-//    _UART_SENDBYTE(UART0, CurrentConcentration_Dust >> 8);
-//    _UART_SENDBYTE(UART0, CurrentConcentration_Dust);
-//    //Temp
-//    _UART_SENDBYTE(UART0, *ptemp >> 24);
-//    _UART_SENDBYTE(UART0, *ptemp >> 16);
-//    _UART_SENDBYTE(UART0, *ptemp >> 8);
-//    _UART_SENDBYTE(UART0, *ptemp);
-//    //Humi
-//    _UART_SENDBYTE(UART0, *phumi >> 24);
-//    _UART_SENDBYTE(UART0, *phumi >> 16);
-//    _UART_SENDBYTE(UART0, *phumi >> 8);
-//    _UART_SENDBYTE(UART0, *phumi);
-//    //Ion
-//    _UART_SENDBYTE(UART0, *pion >> 24);
-//    _UART_SENDBYTE(UART0, *pion >> 16);
-//    _UART_SENDBYTE(UART0, *pion >> 8);
-//    _UART_SENDBYTE(UART0, *pion);
-//    //Radi
-//    _UART_SENDBYTE(UART0, *pradi >> 24);
-//    _UART_SENDBYTE(UART0, *pradi >> 16);
-//    _UART_SENDBYTE(UART0, *pradi >> 8);
-//    _UART_SENDBYTE(UART0, *pradi);
+  //    //Smoke:
+  //    _UART_SENDBYTE(UART0, 0);
+  //    _UART_SENDBYTE(UART0, 0);
+  //    _UART_SENDBYTE(UART0, CurrentConcentration_Smoke >> 8);
+  //    _UART_SENDBYTE(UART0, CurrentConcentration_Smoke);
+  //    //Dust:
+  //    _UART_SENDBYTE(UART0, 0);
+  //    _UART_SENDBYTE(UART0, 0);
+  //    _UART_SENDBYTE(UART0, CurrentConcentration_Dust >> 8);
+  //    _UART_SENDBYTE(UART0, CurrentConcentration_Dust);
+  //    //Temp
+  //    _UART_SENDBYTE(UART0, *ptemp >> 24);
+  //    _UART_SENDBYTE(UART0, *ptemp >> 16);
+  //    _UART_SENDBYTE(UART0, *ptemp >> 8);
+  //    _UART_SENDBYTE(UART0, *ptemp);
+  //    //Humi
+  //    _UART_SENDBYTE(UART0, *phumi >> 24);
+  //    _UART_SENDBYTE(UART0, *phumi >> 16);
+  //    _UART_SENDBYTE(UART0, *phumi >> 8);
+  //    _UART_SENDBYTE(UART0, *phumi);
+  //    //Ion
+  //    _UART_SENDBYTE(UART0, *pion >> 24);
+  //    _UART_SENDBYTE(UART0, *pion >> 16);
+  //    _UART_SENDBYTE(UART0, *pion >> 8);
+  //    _UART_SENDBYTE(UART0, *pion);
+  //    //Radi
+  //    _UART_SENDBYTE(UART0, *pradi >> 24);
+  //    _UART_SENDBYTE(UART0, *pradi >> 16);
+  //    _UART_SENDBYTE(UART0, *pradi >> 8);
+  //    _UART_SENDBYTE(UART0, *pradi);
 }
 
 void
@@ -813,7 +867,7 @@ Calc_Virtual_KandB(void)
 //startpos : 数据开始点 （往回）
 uint16_t
 Cyclic_Aver(uint16_t* buf, uint8_t BUFSIZE, uint8_t startpos,
-    uint8_t AVGDataNum, volatile uint8_t* p_totalCnt)
+            uint8_t AVGDataNum, volatile uint8_t* p_totalCnt)
 {
   // 计算最近cyclic_length秒的均值
   uint32_t result = 0;
@@ -875,7 +929,8 @@ GetSensorAddr(void)
   for (i = 0; i < 20; i++)
     {
       ADC ->ADCHER = 0x01 << 0;
-      /* 单次转换 */ADC ->ADCR = ADC_ADCR_ADEN_Msk | ADC_ADCR_ADST_Msk;
+      /* 单次转换 */
+      ADC ->ADCR = ADC_ADCR_ADEN_Msk | ADC_ADCR_ADST_Msk;
       /* 等待转换完成 */
       while (ADC ->ADCR & ADC_ADCR_ADST_Msk)
         ;
@@ -989,6 +1044,9 @@ DustSensor_Init(void)
   PWMB_Init();
 
   Start_PWMA_INT();
+#ifdef  WDT_ENABLE
+  WDT_Init();
+#endif
 }
 
 void
@@ -1003,29 +1061,32 @@ ProcessInterfaceCommand(void)
         return;
       switch (Buf[2])
         {
-      case 0xf0:
-        Readed_Machine_State = 0;
-        DustPortOrUartMode = 1;
-        break;
-      case 0xf1:
-        DustPortOrUartMode = 1;
-        Readed_Machine_State = 1;
-        workingTm = 10 * 60; //  minute
-        break;
-      case 0xf5:
-        _UART_SENDBYTE(UART0, 0x06)
-;        _UART_SENDBYTE(UART0, CurrentConcentration_Smoke >> 8);
-        _UART_SENDBYTE(UART0, CurrentConcentration_Smoke);
-        _UART_SENDBYTE(UART0, 0x03);
-        break;
+        case 0xf0:
+          Readed_Machine_State = 0;
+          DustPortOrUartMode = 1;
+          break;
+        case 0xf1:
+          DustPortOrUartMode = 1;
+          Readed_Machine_State = 1;
+          workingTm = 10 * 60; //  minute
+          break;
+        case 0xf5:
+#ifdef WDT_ENABLE
+     // WDT_Fetch();
+#endif					
+          _UART_SENDBYTE(UART0, 0x06);
+          _UART_SENDBYTE(UART0, CurrentConcentration_Smoke >> 8);
+          _UART_SENDBYTE(UART0, CurrentConcentration_Smoke);
+          _UART_SENDBYTE(UART0, 0x03);
+          break;
         case 0xa0:
-        AutoOutPutCurrentSmoke = FALSE;
-        break;
+          AutoOutPutCurrentSmoke = FALSE;
+          break;
         case 0xa1:
-        AutoOutPutCurrentSmoke = TRUE;
-        break;
-      }
-  }
+          AutoOutPutCurrentSmoke = TRUE;
+          break;
+        }
+    }
 }
 
 void
@@ -1042,13 +1103,13 @@ ProcessSerialCommand(void)
 
       /*动态创建一个有数据长度+3(类型,长度,校验码)个uint8_t元素的数组*/
       commandBytes = (uint8_t*) malloc(
-          sizeof(uint8_t) * (GetDataLength((uint8_t*) SerialBuffer) + 3));
+                       sizeof(uint8_t) * (GetDataLength((uint8_t*) SerialBuffer) + 3));
 
       if (TranslateData((uint8_t*) SerialBuffer, commandBytes))
         {
           if (CheckDATA(commandBytes))
             {
-//              uint32_t fTemp;
+              //              uint32_t fTemp;
               /* 保存当前的模式, 切换到关闭自动输出的模式处理完命令后切换回原来的模式 */
               enum UART_OUTPUT_MOD temp_mod = CurrentUARTMod;
               CurrentUARTMod = UARTMOD_NO_AUTO_OUTPUT;
@@ -1058,262 +1119,262 @@ ProcessSerialCommand(void)
               switch (commandBytes[0])
                 // 类型
                 {
-              default:
-                break;
+                default:
+                  break;
 #ifdef EXT_CMD
                 case CMD_GET_SEC_VALUE:
-                if (commandBytes[3] == Address)
-                  {
-                    readPos = (Sec_ReadCount ? Sec_ReadCount : DATA_SIZE) - 1;
-                    _UART_SENDBYTE(UART0, Sec_Data[readPos] >> 8);
-                    _UART_SENDBYTE(UART0, Sec_Data[readPos]);
-                  }
-                break;
+                  if (commandBytes[3] == Address)
+                    {
+                      readPos = (Sec_ReadCount ? Sec_ReadCount : DATA_SIZE) - 1;
+                      _UART_SENDBYTE(UART0, Sec_Data[readPos] >> 8);
+                      _UART_SENDBYTE(UART0, Sec_Data[readPos]);
+                    }
+                  break;
                 case CMD_GET_AVER_VALUE:
-                if (commandBytes[3] == Address)
-                  {
-                    _UART_SENDBYTE(UART0, Min_Data[readPos] >> 8);
-                    _UART_SENDBYTE(UART0, Min_Data[readPos]);
-                  }
-                break;
+                  if (commandBytes[3] == Address)
+                    {
+                      _UART_SENDBYTE(UART0, Min_Data[readPos] >> 8);
+                      _UART_SENDBYTE(UART0, Min_Data[readPos]);
+                    }
+                  break;
 #endif
-              case CMD_SET_UART_OUTPUT_MOD: //
-                if (commandBytes[3] == Address || commandBytes[3] == 0)
-                  {
-                    temp_mod = (enum UART_OUTPUT_MOD) commandBytes[4];
-                  }
-                break;
+                case CMD_SET_UART_OUTPUT_MOD: //
+                  if (commandBytes[3] == Address || commandBytes[3] == 0)
+                    {
+                      temp_mod = (enum UART_OUTPUT_MOD) commandBytes[4];
+                    }
+                  break;
 
-              case CMD_GET_CALIBRATE_VOL:
-                if (commandBytes[3] == Address)
-                  {
-                    _UART_SENDBYTE(UART0, CyclicAver >> 8);
-                    _UART_SENDBYTE(UART0, CyclicAver);
-                  }
-                break;
+                case CMD_GET_CALIBRATE_VOL:
+                  if (commandBytes[3] == Address)
+                    {
+                      _UART_SENDBYTE(UART0, CyclicAver >> 8);
+                      _UART_SENDBYTE(UART0, CyclicAver);
+                    }
+                  break;
                 case CMD_GET_CURRENT_SMOKE:
-                if (commandBytes[3] == Address)
-                  {
-                    _UART_SENDBYTE(UART0, CurrentConcentration_Smoke >> 8);
+                  if (commandBytes[3] == Address)
+                    {
+                      _UART_SENDBYTE(UART0, CurrentConcentration_Smoke >> 8);
                     _UART_SENDBYTE(UART0, CurrentConcentration_Smoke);
-                  }
-                break;
+                    }
+                  break;
 #ifdef EXT_CMD
                 case CMD_GET_CURRENT_DUST:
-                if (commandBytes[3] == Address)
-                  {
-                    _UART_SENDBYTE(UART0, CurrentConcentration_Dust >> 8);
-                    _UART_SENDBYTE(UART0, CurrentConcentration_Dust);
-                  }
-                break;
+                  if (commandBytes[3] == Address)
+                    {
+                      _UART_SENDBYTE(UART0, CurrentConcentration_Dust >> 8);
+                      _UART_SENDBYTE(UART0, CurrentConcentration_Dust);
+                    }
+                  break;
 
                 case CMD_GET_SENSOR_VALUES:
-                SendSensorValues();
-                break;
+                  SendSensorValues();
+                  break;
 #endif
 
                 case CMD_GET_CALIBRATE_INFO:
-                if (commandBytes[3] == Address)
-                  {
-                    SendCalInfo();
-                  }
-                break;
+                  if (commandBytes[3] == Address)
+                    {
+                      SendCalInfo();
+                    }
+                  break;
 
                 case CMD_CALIBRATE_A:
-                //todo
+                  //todo
                 if (commandBytes[3] == Address || (Address != 1 && commandBytes[3] == 0))
-                  {
+                    {
                     Calibrate_A_Concentration = commandBytes[4] << 8 | commandBytes[5];
-                    Calibrate_A_AD = CyclicAver;
-                    StoreCAndAD_A();
-                    if (Calibrate_A_Concentration == 0)
-                      {
-                        CleanVoltage = Calibrate_A_AD;
-                      }
-                    StoreCleanVoltage();
+                      Calibrate_A_AD = CyclicAver;
+                      StoreCAndAD_A();
+                      if (Calibrate_A_Concentration == 0)
+                        {
+                          CleanVoltage = Calibrate_A_AD;
+                        }
+                      StoreCleanVoltage();
                     if (Calibrate_B_AD == 0xffff &&
                         Calibrate_B_Concentration == 0xffff &&
                         Calibrate_A_Concentration != 0)
-                      {
-                        // 计算校准值
+                        {
+                          // 计算校准值
                         Sensitivity = (float)(Calibrate_A_AD - CleanVoltage) /
                         (Calibrate_A_Concentration - 0);
-                      }
+                        }
                     else if (Calibrate_B_AD != 0xffff && Calibrate_A_AD != Calibrate_B_AD &&
                         Calibrate_B_Concentration != 0xffff && Calibrate_B_Concentration != Calibrate_A_Concentration)
-                      {
-                        // 计算校准值
+                        {
+                          // 计算校准值
                         Sensitivity = (float)(Calibrate_B_AD - Calibrate_A_AD) /
                         (Calibrate_B_Concentration - Calibrate_A_Concentration);
                         CleanVoltage = Calibrate_A_AD - Calibrate_A_Concentration * Sensitivity;
-                      }
-                    // 保存校准值
-                    StoreCleanVoltage();
-                    StoreSensitivity();
-                    Calc_Virtual_KandB();
-                    if (commandBytes[3] == Address)
-                    SendCalInfo();
-                  }
-                break;
+                        }
+                      // 保存校准值
+                      StoreCleanVoltage();
+                      StoreSensitivity();
+                      Calc_Virtual_KandB();
+                      if (commandBytes[3] == Address)
+                        SendCalInfo();
+                    }
+                  break;
                 case CMD_CALIBRATE_B:
-                //todo
+                  //todo
                 if (commandBytes[3] == Address || (Address != 1 && commandBytes[3] == 0))
-                  {
+                    {
                     Calibrate_B_Concentration = commandBytes[4] << 8 | commandBytes[5];
-                    Calibrate_B_AD = CyclicAver;
-                    StoreCAndAD_B();
-                    if (Calibrate_B_Concentration == 0)
-                      {
-                        CleanVoltage = Calibrate_B_AD;
-                      }
-                    StoreCleanVoltage();
+                      Calibrate_B_AD = CyclicAver;
+                      StoreCAndAD_B();
+                      if (Calibrate_B_Concentration == 0)
+                        {
+                          CleanVoltage = Calibrate_B_AD;
+                        }
+                      StoreCleanVoltage();
                     if (Calibrate_A_AD == 0xffff &&
                         Calibrate_A_Concentration == 0xffff &&
                         Calibrate_B_Concentration != 0)
-                      {
-                        // 计算校准值
+                        {
+                          // 计算校准值
                         Sensitivity = (float)(Calibrate_B_AD - CleanVoltage) /
                         (Calibrate_B_Concentration - 0);
-                      }
+                        }
                     else if (Calibrate_A_AD != 0xffff && Calibrate_B_AD != Calibrate_A_AD &&
                         Calibrate_A_Concentration != 0xffff && Calibrate_A_Concentration != Calibrate_B_Concentration)
-                      {
-                        // 计算校准值
+                        {
+                          // 计算校准值
                         Sensitivity = (float)(Calibrate_A_AD - Calibrate_B_AD) /
                         (Calibrate_A_Concentration - Calibrate_B_Concentration);
                         CleanVoltage = Calibrate_B_AD - Calibrate_B_Concentration * Sensitivity;
-                      }
-                    // 保存校准值
-                    StoreCleanVoltage();
-                    StoreSensitivity();
-                    Calc_Virtual_KandB();
-                    if (commandBytes[3] == Address)
-                    SendCalInfo();
-                  }
-                break;
+                        }
+                      // 保存校准值
+                      StoreCleanVoltage();
+                      StoreSensitivity();
+                      Calc_Virtual_KandB();
+                      if (commandBytes[3] == Address)
+                        SendCalInfo();
+                    }
+                  break;
 #ifdef EXT_CMD
                 case CMD_CAL_N:
-                if (commandBytes[3] == Address || (Address != 1 && commandBytes[3] == 0))
-                  {
-                    Calibrate_N_Concentration = commandBytes[4] << 8 | commandBytes[5];
-                    Dust_Calc_N = (float)DustFiveSecAver / (Calibrate_N_Concentration - CurrentConcentration_Smoke);
-                    if (commandBytes[3] == Address)
-                    SendCalInfo();
-                    StoreDustN();
-                  }
-                break;
+                  if (commandBytes[3] == Address || (Address != 1 && commandBytes[3] == 0))
+                    {
+                      Calibrate_N_Concentration = commandBytes[4] << 8 | commandBytes[5];
+                      Dust_Calc_N = (float)DustFiveSecAver / (Calibrate_N_Concentration - CurrentConcentration_Smoke);
+                      if (commandBytes[3] == Address)
+                        SendCalInfo();
+                      StoreDustN();
+                    }
+                  break;
                 case CMD_SHIFT:
-                if (commandBytes[3] == Address || commandBytes[3] == 0)
-                  {
-                    PWMA_SHIFT(commandBytes[3]);
-                  }
-                break;
+                  if (commandBytes[3] == Address || commandBytes[3] == 0)
+                    {
+                      PWMA_SHIFT(commandBytes[3]);
+                    }
+                  break;
                 case CMD_SET_PWM_PERIOD:
-                if (commandBytes[3] == Address || commandBytes[3] == 0)
-                  {
-                    PWMA->CMR2 = commandBytes[3] << 24 |
-                    commandBytes[4] << 16 |
-                    commandBytes[5] << 8 |
-                    commandBytes[6];
-                  }
-                break;
+                  if (commandBytes[3] == Address || commandBytes[3] == 0)
+                    {
+                      PWMA->CMR2 = commandBytes[3] << 24 |
+                                   commandBytes[4] << 16 |
+                                   commandBytes[5] << 8 |
+                                   commandBytes[6];
+                    }
+                  break;
                 case CMD_GET_PWM_PERIOD:
-                if (commandBytes[3] == Address)
-                  {
-                    _UART_SENDBYTE(UART0, PWMA->CMR2 >> 24);
-                    _UART_SENDBYTE(UART0, PWMA->CMR2 >> 16);
-                    _UART_SENDBYTE(UART0, PWMA->CMR2 >> 8);
-                    _UART_SENDBYTE(UART0, PWMA->CMR2);
-                  }
-                break;
+                  if (commandBytes[3] == Address)
+                    {
+                      _UART_SENDBYTE(UART0, PWMA->CMR2 >> 24);
+                      _UART_SENDBYTE(UART0, PWMA->CMR2 >> 16);
+                      _UART_SENDBYTE(UART0, PWMA->CMR2 >> 8);
+                      _UART_SENDBYTE(UART0, PWMA->CMR2);
+                    }
+                  break;
                 case CMD_SET_TMR_DELAY:
-                if (commandBytes[3] == Address || commandBytes[3] == 0)
-                  {
-                    _TIMER_RESET(TIMER0);
-                    TIMER0->TCMPR = commandBytes[4] << 24 |
-                    commandBytes[5] << 16 |
-                    commandBytes[6] << 8 |
-                    commandBytes[7];
-                  }
-                break;
+                  if (commandBytes[3] == Address || commandBytes[3] == 0)
+                    {
+                      _TIMER_RESET(TIMER0);
+                      TIMER0->TCMPR = commandBytes[4] << 24 |
+                                      commandBytes[5] << 16 |
+                                      commandBytes[6] << 8 |
+                                      commandBytes[7];
+                    }
+                  break;
                 case CMD_GET_TMR_DELAY:
-                if (commandBytes[3] == Address)
-                  {
-                    _UART_SENDBYTE(UART0, TIMER0->TCMPR >> 24);
-                    _UART_SENDBYTE(UART0, TIMER0->TCMPR >> 16);
-                    _UART_SENDBYTE(UART0, TIMER0->TCMPR >> 8);
-                    _UART_SENDBYTE(UART0, TIMER0->TCMPR);
-                  }
-                break;
+                  if (commandBytes[3] == Address)
+                    {
+                      _UART_SENDBYTE(UART0, TIMER0->TCMPR >> 24);
+                      _UART_SENDBYTE(UART0, TIMER0->TCMPR >> 16);
+                      _UART_SENDBYTE(UART0, TIMER0->TCMPR >> 8);
+                      _UART_SENDBYTE(UART0, TIMER0->TCMPR);
+                    }
+                  break;
                 case CMD_SET_K:
-                if (commandBytes[3] == Address || commandBytes[3] == 0)
-                  {
-                    fTemp = commandBytes[4] << 24 |
-                    commandBytes[5] << 16 |
-                    commandBytes[6] << 8 |
-                    commandBytes[7];
-                    Sensitivity = *(float*)&fTemp;
-                    StoreSensitivity();
-                    Calc_Virtual_KandB();
-                    if (commandBytes[3] == Address)
-                    SendCalInfo();
-                  }
-                break;
+                  if (commandBytes[3] == Address || commandBytes[3] == 0)
+                    {
+                      fTemp = commandBytes[4] << 24 |
+                              commandBytes[5] << 16 |
+                              commandBytes[6] << 8 |
+                              commandBytes[7];
+                      Sensitivity = *(float*)&fTemp;
+                      StoreSensitivity();
+                      Calc_Virtual_KandB();
+                      if (commandBytes[3] == Address)
+                        SendCalInfo();
+                    }
+                  break;
                 case CMD_SET_Kn1:
-                if (commandBytes[3] == Address || commandBytes[3] == 0)
-                  {
-                    fTemp = commandBytes[4] << 24 |
-                    commandBytes[5] << 16 |
-                    commandBytes[6] << 8 |
-                    commandBytes[7];
-                    Kn1 = *(float*)&fTemp;
-                    StoreKn1();
-                    Calc_Virtual_KandB();
-                    if (commandBytes[3] == Address)
-                    SendCalInfo();
-                  }
-                break;
+                  if (commandBytes[3] == Address || commandBytes[3] == 0)
+                    {
+                      fTemp = commandBytes[4] << 24 |
+                              commandBytes[5] << 16 |
+                              commandBytes[6] << 8 |
+                              commandBytes[7];
+                      Kn1 = *(float*)&fTemp;
+                      StoreKn1();
+                      Calc_Virtual_KandB();
+                      if (commandBytes[3] == Address)
+                        SendCalInfo();
+                    }
+                  break;
                 case CMD_SET_Kn2:
-                if (commandBytes[3] == Address || commandBytes[3] == 0)
-                  {
-                    fTemp = commandBytes[4] << 24 |
-                    commandBytes[5] << 16 |
-                    commandBytes[6] << 8 |
-                    commandBytes[7];
-                    Kn2 = *(float*)&fTemp;
-                    StoreKn2();
-                    Calc_Virtual_KandB();
-                    if (commandBytes[3] == Address)
-                    SendCalInfo();
-                  }
-                break;
+                  if (commandBytes[3] == Address || commandBytes[3] == 0)
+                    {
+                      fTemp = commandBytes[4] << 24 |
+                              commandBytes[5] << 16 |
+                              commandBytes[6] << 8 |
+                              commandBytes[7];
+                      Kn2 = *(float*)&fTemp;
+                      StoreKn2();
+                      Calc_Virtual_KandB();
+                      if (commandBytes[3] == Address)
+                        SendCalInfo();
+                    }
+                  break;
                 case CMD_SET_B:
-                if (commandBytes[3] == Address || commandBytes[3] == 0)
-                  {
-                    CleanVoltage = commandBytes[4] << 8 |
-                    commandBytes[5];
-                    StoreCleanVoltage();
-                    Calc_Virtual_KandB();
-                    if (commandBytes[3] == Address)
-                    SendCalInfo();
-                  }
-                break;
+                  if (commandBytes[3] == Address || commandBytes[3] == 0)
+                    {
+                      CleanVoltage = commandBytes[4] << 8 |
+                                     commandBytes[5];
+                      StoreCleanVoltage();
+                      Calc_Virtual_KandB();
+                      if (commandBytes[3] == Address)
+                        SendCalInfo();
+                    }
+                  break;
                 case CMD_SET_CAL_N:
-                if (commandBytes[3] == Address || commandBytes[3] == 0)
-                  {
-                    fTemp = commandBytes[4] << 24 |
-                    commandBytes[5] << 16 |
-                    commandBytes[6] << 8 |
-                    commandBytes[7];
-                    Dust_Calc_N = *(float*)&fTemp;
-                    StoreDustN();
-                    if (commandBytes[3] == Address)
-                    SendCalInfo();
-                  }
-                break;
+                  if (commandBytes[3] == Address || commandBytes[3] == 0)
+                    {
+                      fTemp = commandBytes[4] << 24 |
+                              commandBytes[5] << 16 |
+                              commandBytes[6] << 8 |
+                              commandBytes[7];
+                      Dust_Calc_N = *(float*)&fTemp;
+                      StoreDustN();
+                      if (commandBytes[3] == Address)
+                        SendCalInfo();
+                    }
+                  break;
 
 #endif
-              }
+                }
               CurrentUARTMod = temp_mod;
             }
         }
@@ -1354,7 +1415,7 @@ CalVDDAVG()
   Vdd_Aver1S = sec_Aver;
   //电源电压  Vdd_Aver1S=v25/vdd*4096   vdd==(int) ((uint32_t) 1200*4096/Vdd_Aver1S);
   VddRel_MV = (uint16_t) ((uint32_t) 1200 * 4096 / Vdd_Aver1S);
-//                              DPRINTF(("VDD=%dmV\r\n", VddRel_MV));
+  //                              DPRINTF(("VDD=%dmV\r\n", VddRel_MV));
   //        DPRINTF(("VDD=%dmV\r\n", Vdd_Aver1S));
 
 }
@@ -1413,14 +1474,14 @@ GetCurrentSmoke(uint16_t tempv)
 void
 JudgeRedo()
 {
-  uint16_t CyclicAver1, i;      //最近n秒平均值 突变
+  uint16_t CyclicAver1, i; //最近n秒平均值 突变
   //最近3秒变化量大，则数据重新采样，以利于显示的快速更新，取最近3秒平均值
   CyclicAver1 = Cyclic_Aver((uint16_t*) Min_Data, 60, Min_ReadCount, 3,
-      &Total_ReadCount);
+                            &Total_ReadCount);
   //    if(abs(CyclicAver1-CyclicAver)*10/CyclicAver>2)
   if (abs((int32_t) CyclicAver1 - (int32_t) CyclicAver) > 45)
     {
-//		CyclicAver1=Min_Data[(Min_ReadCount-1)%60];//变化根剧烈
+      //		CyclicAver1=Min_Data[(Min_ReadCount-1)%60];//变化根剧烈
       for (i = 0; i < UPDATE_CYCLIC_COUNT; i++)
         {
           Min_Data[i] = CyclicAver1;
@@ -1437,8 +1498,8 @@ void
 TryUpdateClean(uint16_t AVR1minvalue)
 {
 
-  static uint16_t First_Value = 0;  //最大值
-  static uint16_t Last_Value = 0;  //平台值
+  static uint16_t First_Value = 0; //最大值
+  static uint16_t Last_Value = 0; //平台值
   static volatile _Bool First_Start = FALSE;
   static volatile _Bool Last_Machine_State = FALSE;
   _Bool Current_Machine_State = 0;
@@ -1456,7 +1517,7 @@ TryUpdateClean(uint16_t AVR1minvalue)
       || (VddRel_MV > MAX_UPDATE_VDD) //电源电压升高了
 #endif
 
-      )
+     )
 
     {
       TurnUpCleanVolConfirmTimes = 0;
@@ -1472,13 +1533,13 @@ TryUpdateClean(uint16_t AVR1minvalue)
       DPRINTF(("Machine is working, FirstStart: %d\r\n", First_Start));
       DPRINTF(("minValue: %d\r\n", AVR1minvalue));
       DPRINTF(("FirstValue: %d\r\nLast_Value: %d\r\nTurnUpCleanVolConfirmTimes: %d\r\n",
-              First_Value, Last_Value, TurnUpCleanVolConfirmTimes));
+               First_Value, Last_Value, TurnUpCleanVolConfirmTimes));
       DPRINTF(("Clean Voltage: %d \r\n", CleanVoltage));
 #endif
       // 如果灰尘值小于一定值15ug以上，不更新
       if (AVR1minvalue
           <= CleanVoltage + CLEAN_UP_UPDATE_THRESHOLD * Sensitivity)
-//不大于门限
+        //不大于门限
         {
           Last_Value = 0;
           TurnUpCleanVolConfirmTimes = 0;
@@ -1518,7 +1579,7 @@ TryUpdateClean(uint16_t AVR1minvalue)
                       > CLEAN_UP_FINAL_RANGE))
                 {
                   uint16_t subValue = ((Last_Value - CleanVoltage)
-                      * CLEAN_UP_CALI_VALUE);
+                                       * CLEAN_UP_CALI_VALUE);
                   if (subValue < 3 * Sensitivity)
                     subValue = 3 * Sensitivity;
                   CleanVoltage = (uint16_t) (CleanVoltage + subValue);
@@ -1530,7 +1591,7 @@ TryUpdateClean(uint16_t AVR1minvalue)
                       /**/
                       CurrentUARTMod = UARTMOD_DEBUG;
                       DPRINTF(
-                          ("CLEAN_VOLTAGE Updated to: %d\r\n", CleanVoltage));
+                        ("CLEAN_VOLTAGE Updated to: %d\r\n", CleanVoltage));
                       DPRINTF(("Current Change: %f%%\r\n", percent * 100));
                       CurrentUARTMod = UARTMOD_DATA_LINK;
                       /**/
@@ -1551,10 +1612,10 @@ CalTurnDown(uint16_t DustV)
   if ((CurrentUARTMod == UARTMOD_CAL) || (DustV >= CleanVoltage)
 #ifdef          REF25_VDD
       //电源电压过低，不做更新无尘电压  //jxd
-      || (VddRel_MV < MIN_UPDATE_VDD)  //4.8v
+      || (VddRel_MV < MIN_UPDATE_VDD) //4.8v
 
 #endif
-      )
+     )
 
     {
       TurnDownCleanVolConfirmTimes = 0;
@@ -1616,10 +1677,10 @@ DisplaySmoke(void)
 
         }
     }
-//                else if(CurrentUARTMod != UARTMOD_CAL)
-//                {
-//                    DPRINTF(("Smoke: %dug\t Dust: %dug\r\n", CurrentConcentration_Smoke, CurrentConcentration_Dust));
-//                }
+  //                else if(CurrentUARTMod != UARTMOD_CAL)
+  //                {
+  //                    DPRINTF(("Smoke: %dug\t Dust: %dug\r\n", CurrentConcentration_Smoke, CurrentConcentration_Dust));
+  //                }
   PrintToLCD(2, strSVal, CurrentConcentration_Smoke, 4);
   //PrintToLCD(3, strCVal, CurrentConcentration_Dust, 6);
 }
@@ -1628,6 +1689,11 @@ DustSensor_Process(void)
 {
   if (Sec_ReadCount >= DATA_SIZE)
     {
+			P15=!P15;
+
+#ifdef WDT_ENABLE
+      WDT_Fetch();
+#endif
 #ifdef REF25_VDD
       CalVDDAVG();
 #endif
@@ -1636,25 +1702,25 @@ DustSensor_Process(void)
 #endif
       //计算1秒的灰尘采样平均值
       CalDustVolTageAVG();
-      Sec_ReadCount = 0;      //重新开始新一轮测量，10ms，  一个，将缓冲区指针置0
-//实际已经采样的数据个数，250随便取的，采样未满60，取只取Total_ReadCount个数计算平均数，满60 择取60个或CYCLIC_COUNT（较小）的平均数
+      Sec_ReadCount = 0; //重新开始新一轮测量，10ms，  一个，将缓冲区指针置0
+      //实际已经采样的数据个数，250随便取的，采样未满60，取只取Total_ReadCount个数计算平均数，满60 择取60个或CYCLIC_COUNT（较小）的平均数
       if (Total_ReadCount < 250)
         Total_ReadCount++;
-        {
-          // 更新PWM输出
-          Set_PWMB_Output(CurrentConcentration_Smoke);
-          // 计算最近CYCLIC_COUNT=?秒的均值
-          CyclicAver = Cyclic_Aver((uint16_t*) Min_Data, 60, Min_ReadCount,
-              CYCLIC_COUNT, &Total_ReadCount);
-          //最近3秒变化量大，则数据重新采样，以利于显示的快速更新
-          //JudgeRedo();
+      {
+        // 更新PWM输出
+        Set_PWMB_Output(CurrentConcentration_Smoke);
+        // 计算最近CYCLIC_COUNT=?秒的均值
+        CyclicAver = Cyclic_Aver((uint16_t*) Min_Data, 60, Min_ReadCount,
+                                 CYCLIC_COUNT, &Total_ReadCount);
+        //最近3秒变化量大，则数据重新采样，以利于显示的快速更新
+        //JudgeRedo();
           //CyclicAveraftercalibrate = CalTempCalibrate(CyclicAver); //其他温度下的测量电压映射到 25度的电压 ，在25度的曲线运算，所有存储的电压系数都是25度的
           CurrentConcentration_Smoke = GetCurrentSmoke(
               CyclicAveraftercalibrate);      //根据电压计算浓度值
 
-          // 输出模式为DATA_LINK 每秒输出一次数据
-          DisplaySmoke();
-        }
+        // 输出模式为DATA_LINK 每秒输出一次数据
+        DisplaySmoke();
+      }
 
 #define	DUSTIN_STATUS	P04
       // 获取机器工作状态
@@ -1663,7 +1729,7 @@ DustSensor_Process(void)
       if (Update_ReadCount == UPDATE_CYCLIC_COUNT - 1
           && CurrentUARTMod != UARTMOD_CAL)
         {
-          DustPortOrUartMode = 1;		//强制
+          DustPortOrUartMode = 1; //强制
           if (DustPortOrUartMode == 0) //jxd利用端口判定状态
             {
               if (DUSTIN_STATUS == 1)
@@ -1702,7 +1768,7 @@ DustSensor_Process(void)
           Update_ReadCount = 0;
           // 向上更新无尘电压 镜头有灰尘，散射严重,每分钟检查一次
           TryUpdateClean(min_Aver);
-//发光老化或电源电压低了//每 时调用一次//向下更新
+          //发光老化或电源电压低了//每 时调用一次//向下更新
           CalTurnDown(min_Aver);
         }
 
